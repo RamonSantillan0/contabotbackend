@@ -13,5 +13,4 @@ pydantic-settings==2.4.0
 # LLM (Ollama Cloud vía HTTP)
 requests==2.32.3
 
-psycopg2-binary==2.9.9
-
+psycopg[binary]==3.2.1
