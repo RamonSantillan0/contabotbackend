@@ -2,29 +2,34 @@ import hmac
 import hashlib
 import time
 
-def verify_ycloud_signature(signature_header: str, raw_body: bytes, secret: str) -> bool:
-    # signature_header: "t=1770099810,s=..."
+def verify_ycloud_signature(signature_header: str, raw_body: bytes, secret: str, window_sec: int = 300) -> bool:
     if not signature_header or not secret:
         return False
 
-    parts = dict(
-        p.split("=", 1) for p in signature_header.split(",") if "=" in p
-    )
+    parts = {}
+    for kv in signature_header.split(","):
+        kv = kv.strip()
+        if "=" in kv:
+            k, v = kv.split("=", 1)
+            parts[k.strip()] = v.strip()
+
     t = parts.get("t")
-    # anti-replay: 5 minutos
-    now = int(time.time())
-    if abs(now - int(t)) > 300:
-        return False    
     s = parts.get("s")
     if not t or not s:
         return False
 
-    # payload: "{t}.{raw_body}."
-    payload_str = f"{t}.{raw_body.decode('utf-8') }."
-    expected = hmac.new(
-        secret.encode("utf-8"),
-        payload_str.encode("utf-8"),
-        hashlib.sha256
-    ).hexdigest()
+    # anti-replay
+    try:
+        t_int = int(t)
+    except ValueError:
+        return False
+
+    now = int(time.time())
+    if abs(now - t_int) > window_sec:
+        return False
+
+    # payload = b"{t}." + raw_body + b"."
+    payload = t.encode("utf-8") + b"." + raw_body + b"."
+    expected = hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
 
     return hmac.compare_digest(expected, s)
