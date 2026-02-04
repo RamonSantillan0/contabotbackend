@@ -17,41 +17,39 @@ async def ycloud_inbound(
 ):
     raw = await request.body()
 
-    # Parse del wrapper de n8n (si viene)
-    payload = None
+    # Intentar parsear JSON
     try:
         payload = json.loads(raw.decode("utf-8"))
     except Exception:
-        payload = None
+        raise HTTPException(status_code=400, detail="Invalid JSON")
 
-    # Determinar el raw real a verificar (ideal: raw original firmado por YCloud)
-    raw_to_verify = raw
-    if isinstance(payload, dict) and "raw_ycloud" in payload and isinstance(payload["raw_ycloud"], str):
-        raw_to_verify = payload["raw_ycloud"].encode("utf-8")
-
-    # Flags de verificación
+    # Flags
     verify_enabled = os.getenv("YCLOUD_VERIFY_SIGNATURE", "1") == "1"
     internal_key = os.getenv("INTERNAL_API_KEY", "")
 
-    # Si estás en DEV, podés permitir bypass solo desde n8n (con X-API-Key)
     if verify_enabled:
+        # Firma real (modo PROD)
         secret = os.getenv("YCLOUD_WEBHOOK_SECRET", "")
         if not secret:
             raise HTTPException(status_code=500, detail="YCLOUD_WEBHOOK_SECRET not set")
 
+        # Si n8n manda raw_ycloud, úsalo; si no, usa raw
+        raw_to_verify = raw
+        if isinstance(payload, dict) and isinstance(payload.get("raw_ycloud"), str) and payload["raw_ycloud"]:
+            raw_to_verify = payload["raw_ycloud"].encode("utf-8")
+
         if not verify_ycloud_signature(ycloud_signature, raw_to_verify, secret):
             raise HTTPException(status_code=401, detail="Invalid signature")
+
     else:
-        # bypass seguro: solo si coincide tu api key interna (evita que cualquiera saltee firma)
-        if internal_key and x_api_key != internal_key:
+        # ✅ Camino 1: BYPASS seguro (solo n8n con API key interna)
+        if not internal_key:
+            raise HTTPException(status_code=500, detail="INTERNAL_API_KEY not set")
+        if x_api_key != internal_key:
             raise HTTPException(status_code=401, detail="Invalid internal key")
 
-    # Tomar evento: directo o dentro del wrapper
-    if isinstance(payload, dict):
-        event = payload.get("body", payload)
-    else:
-        # si no es JSON válido
-        raise HTTPException(status_code=400, detail="Invalid JSON")
+    # Tomar evento (wrapper o directo)
+    event = payload.get("body", payload) if isinstance(payload, dict) else payload
 
     msg = event.get("whatsappInboundMessage", {})
     if not msg:
